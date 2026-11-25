@@ -160,6 +160,37 @@ class _ManageProjectsPageState extends State<ManageProjectsPage> {
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
                       _toolbar(),
+                      if (_store.loadError != null) ...[
+                        const SizedBox(height: 12),
+                        Container(
+                          padding: const EdgeInsets.all(14),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFFDECEC),
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Row(
+                            children: [
+                              const Icon(
+                                Icons.cloud_off_rounded,
+                                color: Color(0xFFD32F2F),
+                              ),
+                              const SizedBox(width: 10),
+                              Expanded(
+                                child: Text(
+                                  _store.loadError!,
+                                  style: const TextStyle(
+                                    color: Color(0xFFB71C1C),
+                                  ),
+                                ),
+                              ),
+                              TextButton(
+                                onPressed: _store.reload,
+                                child: const Text('ลองใหม่'),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
                       const SizedBox(height: 16),
                       Panel(
                         padding: EdgeInsets.zero,

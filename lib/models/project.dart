@@ -115,6 +115,10 @@ class NewProject {
     this.contactEmail = '',
   });
 
+  /// id แถวในตาราง projects ของ Supabase (null = ยังไม่ได้บันทึกขึ้นเซิร์ฟเวอร์)
+  /// ที่เก็บข้อมูลเป็นคนตั้งค่าให้หลังบันทึก
+  String? id;
+
   final String name;
   final String type;
   final String developer;

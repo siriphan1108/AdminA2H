@@ -44,12 +44,14 @@ class _DashboardPageState extends State<DashboardPage> {
   Timer? _idle;
 
   /// ชื่อที่แสดงของแอดมินที่เข้าสู่ระบบอยู่
-  String get _username => _auth.current?.name ?? widget.username;
+  String get _username => _auth.name ?? widget.username;
 
   @override
   void initState() {
     super.initState();
     _auth.addListener(_onAuth);
+    // โหลดโครงการล่าสุดจากเซิร์ฟเวอร์ (แอดมินเห็นทุกโครงการ รวมที่ซ่อนอยู่)
+    ProjectStore.instance.reload();
     SettingsStore.instance.load().then((_) => _resetIdle());
   }
 

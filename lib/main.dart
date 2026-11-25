@@ -4,9 +4,18 @@ import 'package:google_fonts/google_fonts.dart';
 import 'pages/dashboard_page.dart';
 import 'pages/login_page.dart';
 import 'services/admin_auth.dart';
+import 'services/project_store.dart';
+import 'services/supabase_backend.dart';
+import 'services/supabase_projects.dart';
 import 'theme/app_colors.dart';
 
-void main() => runApp(const AdminApp());
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await initSupabase();
+  AdminAuth.instance.useBackend(SupabaseAuthBackend());
+  ProjectStore.instance.useBackend(SupabaseProjectBackend());
+  runApp(const AdminApp());
+}
 
 class AdminApp extends StatelessWidget {
   const AdminApp({super.key});
@@ -29,7 +38,6 @@ class AdminApp extends StatelessWidget {
 }
 
 /// เปิดเว็บ: ถ้าจดจำการเข้าสู่ระบบไว้ ไปหน้าหลักเลย ไม่งั้นไปหน้าล็อกอิน
-/// (หน้าล็อกอินจะเปลี่ยนเป็นหน้าตั้งค่าครั้งแรกเองถ้ายังไม่มีแอดมิน)
 class _AuthGate extends StatelessWidget {
   const _AuthGate();
 

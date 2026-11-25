@@ -1,95 +1,55 @@
 import 'dart:convert';
-import 'dart:math';
 
-import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'settings_store.dart';
 
-const kRoleOwner = 'ผู้ดูแลหลัก'; // เพิ่ม/ระงับ/ลบแอดมินคนอื่นได้
-const kRoleAdmin = 'แอดมิน';
+/// ค่า role ในตาราง profiles ของ Supabase
+const kRoleOwner = 'owner'; // ผู้ดูแลหลัก: เพิ่ม/ถอด/เปลี่ยนสิทธิ์แอดมินได้
+const kRoleAdmin = 'admin';
+const kRoleUser = 'user'; // ลูกค้าในแอป — เข้าเว็บแอดมินไม่ได้
 const kAdminRoles = [kRoleOwner, kRoleAdmin];
 
-/// บัญชีผู้ดูแลระบบ (คนที่เข้าเว็บแอดมินได้)
-class AdminAccount {
-  const AdminAccount({
+String roleLabel(String role) => switch (role) {
+  kRoleOwner => 'ผู้ดูแลหลัก',
+  kRoleAdmin => 'แอดมิน',
+  _ => 'ผู้ใช้ทั่วไป',
+};
+
+/// โปรไฟล์ผู้ดูแลระบบ (แถวในตาราง profiles)
+class AdminProfile {
+  const AdminProfile({
     required this.id,
-    required this.name,
-    required this.username,
     required this.email,
-    this.phone = '',
+    required this.name,
+    required this.phone,
     required this.role,
-    this.active = true,
-    required this.salt,
-    required this.hash,
-    required this.createdAt,
   });
 
   final String id;
-  final String name;
-  final String username;
   final String email;
+  final String name;
   final String phone;
   final String role;
-  final bool active;
-  final String salt;
-  final String hash;
-  final DateTime createdAt;
 
   bool get isOwner => role == kRoleOwner;
+  bool get isAdmin => role == kRoleOwner || role == kRoleAdmin;
 
-  AdminAccount copyWith({
-    String? name,
-    String? username,
-    String? email,
-    String? phone,
-    String? role,
-    bool? active,
-    String? salt,
-    String? hash,
-  }) => AdminAccount(
-    id: id,
-    name: name ?? this.name,
-    username: username ?? this.username,
-    email: email ?? this.email,
-    phone: phone ?? this.phone,
-    role: role ?? this.role,
-    active: active ?? this.active,
-    salt: salt ?? this.salt,
-    hash: hash ?? this.hash,
-    createdAt: createdAt,
-  );
+  /// ชื่อที่แสดง (ถ้ายังไม่ได้ตั้งชื่อ ใช้ส่วนหน้าของอีเมล)
+  String get displayName =>
+      name.trim().isNotEmpty ? name.trim() : email.split('@').first;
 
-  Map<String, dynamic> toJson() => {
-    'id': id,
-    'name': name,
-    'username': username,
-    'email': email,
-    'phone': phone,
-    'role': role,
-    'active': active,
-    'salt': salt,
-    'hash': hash,
-    'created_at': createdAt.toIso8601String(),
-  };
-
-  factory AdminAccount.fromJson(Map<String, dynamic> j) => AdminAccount(
-    id: j['id'] as String,
-    name: j['name'] as String? ?? '',
-    username: j['username'] as String? ?? '',
-    email: j['email'] as String? ?? '',
-    phone: j['phone'] as String? ?? '',
-    role: j['role'] as String? ?? kRoleAdmin,
-    active: j['active'] as bool? ?? true,
-    salt: j['salt'] as String,
-    hash: j['hash'] as String,
-    createdAt:
-        DateTime.tryParse(j['created_at'] as String? ?? '') ?? DateTime.now(),
+  factory AdminProfile.fromRow(Map<String, dynamic> r) => AdminProfile(
+    id: r['id'] as String,
+    email: r['email'] as String? ?? '',
+    name: r['full_name'] as String? ?? '',
+    phone: r['phone'] as String? ?? '',
+    role: r['role'] as String? ?? kRoleUser,
   );
 }
 
-/// เกิดเมื่อทำรายการไม่ได้ — [message] เป็นข้อความภาษาไทยสำหรับแสดงผู้ใช้
+/// เกิดเมื่อทำรายการไม่ได้ — [message] เป็นภาษาไทยสำหรับแสดงผู้ใช้
 class AuthException implements Exception {
   const AuthException(this.message);
   final String message;
@@ -97,112 +57,110 @@ class AuthException implements Exception {
   String toString() => message;
 }
 
-/// ระบบบัญชีแอดมินแบบเก็บในเบราว์เซอร์ (ทางเลือก ข.)
+/// ตัวเชื่อมระบบหลังบ้าน (ของจริง = Supabase, ตอนเทสต์ = ตัวปลอม)
+abstract class AuthBackend {
+  /// id ผู้ใช้ของ session ที่ค้างอยู่ (null = ยังไม่ได้เข้าสู่ระบบ)
+  String? get sessionUserId;
+
+  /// เข้าสู่ระบบ คืน id ผู้ใช้ — รหัสผิดให้ throw [AuthException]
+  Future<String> signIn(String email, String password);
+  Future<void> signOut();
+  Future<void> updatePassword(String newPassword);
+  Future<void> sendPasswordReset(String email);
+
+  Future<AdminProfile?> fetchProfile(String id);
+  Future<void> updateProfile(String id, {required String name, required String phone});
+  Future<List<AdminProfile>> listAdmins();
+
+  /// เปลี่ยนสิทธิ์ด้วยอีเมล (ฝั่งเซิร์ฟเวอร์ตรวจว่าเป็นผู้ดูแลหลัก)
+  Future<void> setRoleByEmail(String email, String role);
+}
+
+/// ระบบบัญชีผู้ดูแลระบบ — ใช้ Supabase Auth + ตาราง profiles (role)
 ///
-/// รหัสผ่านไม่ได้เก็บตรง ๆ: เก็บเป็น SHA-256 แบบใส่ salt และวนซ้ำหลายรอบ
-/// แต่ข้อมูลทั้งหมดอยู่ใน localStorage ของเครื่องนี้ คนที่ใช้เครื่องนี้แก้ไขได้
-/// จึงเหมาะกับการสาธิต ไม่ใช่ความปลอดภัยจริง
-/// TODO: ย้ายไป backend (เช่น Supabase Auth) ตอนใช้งานจริง
+/// - เข้าได้เฉพาะ role = admin / owner (ลูกค้าในแอปเข้าไม่ได้)
+/// - ล็อกการเข้าสู่ระบบชั่วคราวเมื่อใส่รหัสผิดเกินที่ตั้งไว้ (ฝั่งเบราว์เซอร์)
+///   ส่วน Supabase เองก็จำกัดจำนวนครั้งที่ฝั่งเซิร์ฟเวอร์อีกชั้น
 class AdminAuth extends ChangeNotifier {
   AdminAuth._();
   static final AdminAuth instance = AdminAuth._();
 
-  static const _accountsKey = 'admin_a2h_admins_v1';
-  static const _sessionKey = 'admin_a2h_session_v1';
+  static const _rememberKey = 'admin_a2h_remember_v2';
   static const _lockKey = 'admin_a2h_login_lock_v1';
   static const lockDuration = Duration(minutes: 5);
-  static const _rounds = 4000;
 
-  final List<AdminAccount> _accounts = [];
-  String? _currentId;
+  AuthBackend? _backend;
+  AdminProfile? _current;
+  List<AdminProfile> _admins = [];
   int _failed = 0;
   DateTime? _lockedUntil;
   Future<void>? _loading;
 
-  List<AdminAccount> get accounts => List.unmodifiable(_accounts);
-  bool get hasAdmins => _accounts.isNotEmpty;
-
-  AdminAccount? get current {
-    for (final a in _accounts) {
-      if (a.id == _currentId) return a;
-    }
-    return null;
+  /// เรียกครั้งเดียวตอนเปิดแอป (main.dart) หรือในเทสต์
+  void useBackend(AuthBackend backend) {
+    _backend = backend;
+    _loading = null;
   }
+
+  AuthBackend get _b {
+    final b = _backend;
+    if (b == null) throw const AuthException('ยังไม่ได้เชื่อมต่อระบบหลังบ้าน');
+    return b;
+  }
+
+  AdminProfile? get current => _current;
+  String? get name => _current?.displayName;
+
+  /// รายชื่อผู้ดูแลระบบล่าสุดที่โหลดมา (เรียก [refreshAdmins] เพื่ออัปเดต)
+  List<AdminProfile> get admins => List.unmodifiable(_admins);
 
   DateTime? get lockedUntil =>
       _lockedUntil != null && _lockedUntil!.isAfter(DateTime.now())
       ? _lockedUntil
       : null;
 
-  Future<void> load() => _loading ??= _load();
-
   @visibleForTesting
   void debugReset() {
-    _accounts.clear();
-    _currentId = null;
+    _backend = null;
+    _current = null;
+    _admins = [];
     _failed = 0;
     _lockedUntil = null;
     _loading = null;
   }
 
+  /// โหลดตอนเปิดเว็บ: ถ้ามี session ค้างและติ๊ก "จดจำ" ไว้ ให้อยู่ในระบบต่อ
+  Future<void> load() => _loading ??= _load();
+
   Future<void> _load() async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      final raw = prefs.getString(_accountsKey);
-      if (raw != null) {
-        for (final e in jsonDecode(raw) as List) {
-          _accounts.add(AdminAccount.fromJson(Map<String, dynamic>.from(e)));
-        }
-      }
-      // จดจำการเข้าสู่ระบบ
-      final session = prefs.getString(_sessionKey);
-      if (session != null &&
-          _accounts.any((a) => a.id == session && a.active)) {
-        _currentId = session;
-      }
-      final lock = prefs.getString(_lockKey);
-      if (lock != null) {
+    final prefs = await SharedPreferences.getInstance();
+    final lock = prefs.getString(_lockKey);
+    if (lock != null) {
+      try {
         final j = jsonDecode(lock) as Map<String, dynamic>;
         _failed = j['failed'] as int? ?? 0;
         _lockedUntil = DateTime.tryParse(j['until'] as String? ?? '');
+      } catch (_) {}
+    }
+    final b = _backend;
+    if (b == null) return;
+    final id = b.sessionUserId;
+    if (id == null) return;
+    if (prefs.getBool(_rememberKey) != true) {
+      await b.signOut(); // ไม่ได้ติ๊กจดจำ → เปิดเว็บใหม่ต้องล็อกอินใหม่
+      return;
+    }
+    try {
+      final p = await b.fetchProfile(id);
+      if (p != null && p.isAdmin) {
+        _current = p;
+      } else {
+        await b.signOut();
       }
-      notifyListeners();
     } catch (e) {
-      debugPrint('โหลดบัญชีแอดมินไม่สำเร็จ: $e');
+      debugPrint('ตรวจ session ไม่สำเร็จ: $e');
     }
-  }
-
-  // ------------------------------ password ---------------------------------
-
-  static String _newSalt() {
-    final r = Random.secure();
-    return base64Url.encode(List<int>.generate(16, (_) => r.nextInt(256)));
-  }
-
-  static String _hash(String password, String salt) {
-    var bytes = utf8.encode('$salt:$password');
-    for (var i = 0; i < _rounds; i++) {
-      bytes = Uint8List.fromList(sha256.convert(bytes).bytes);
-    }
-    return base64Url.encode(bytes);
-  }
-
-  static bool _check(AdminAccount a, String password) =>
-      _hash(password, a.salt) == a.hash;
-
-  static String? validatePassword(String? v) {
-    if ((v ?? '').length < 8) return 'รหัสผ่านต้องมีอย่างน้อย 8 ตัว';
-    return null;
-  }
-
-  // ----------------------------- persistence -------------------------------
-
-  Future<void> _save() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(
-      _accountsKey,
-      jsonEncode([for (final a in _accounts) a.toJson()]),
-    );
+    notifyListeners();
   }
 
   Future<void> _saveLock() async {
@@ -213,82 +171,28 @@ class AdminAuth extends ChangeNotifier {
     );
   }
 
-  AdminAccount? _find(String usernameOrEmail) {
-    final q = usernameOrEmail.trim().toLowerCase();
-    for (final a in _accounts) {
-      if (a.username.toLowerCase() == q || a.email.toLowerCase() == q) {
-        return a;
-      }
+  Future<AuthException> _failure(String message) async {
+    await SettingsStore.instance.load();
+    final max = SettingsStore.instance.number('max_login_attempts');
+    _failed++;
+    if (_failed >= max) {
+      _failed = 0;
+      _lockedUntil = DateTime.now().add(lockDuration);
+      await _saveLock();
+      return AuthException(
+        'ใส่รหัสผ่านผิดครบ $max ครั้ง ระบบล็อกการเข้าสู่ระบบไว้ 5 นาที',
+      );
     }
-    return null;
+    await _saveLock();
+    return AuthException('$message (เหลืออีก ${max - _failed} ครั้ง)');
   }
 
-  void _checkUnique(String username, String email, {String? exceptId}) {
-    for (final a in _accounts) {
-      if (a.id == exceptId) continue;
-      if (a.username.toLowerCase() == username.trim().toLowerCase()) {
-        throw const AuthException('ชื่อผู้ใช้นี้มีอยู่แล้ว');
-      }
-      if (email.isNotEmpty &&
-          a.email.toLowerCase() == email.trim().toLowerCase()) {
-        throw const AuthException('อีเมลนี้มีผู้ดูแลระบบใช้แล้ว');
-      }
-    }
-  }
-
-  AdminAccount _newAccount({
-    required String name,
-    required String username,
-    required String email,
-    required String role,
-    required String password,
-  }) {
-    final salt = _newSalt();
-    return AdminAccount(
-      id: 'a${DateTime.now().microsecondsSinceEpoch}',
-      name: name.trim(),
-      username: username.trim(),
-      email: email.trim(),
-      role: role,
-      salt: salt,
-      hash: _hash(password, salt),
-      createdAt: DateTime.now(),
-    );
-  }
-
-  // ------------------------------- actions ---------------------------------
-
-  /// สร้างผู้ดูแลหลักคนแรก (ทำได้ครั้งเดียว ตอนยังไม่มีแอดมินเลย) แล้วเข้าสู่ระบบ
-  Future<void> createFirstOwner({
-    required String name,
-    required String username,
-    required String email,
-    required String password,
-  }) async {
-    await load();
-    if (hasAdmins) {
-      throw const AuthException('มีผู้ดูแลระบบอยู่แล้ว กรุณาเข้าสู่ระบบ');
-    }
-    final a = _newAccount(
-      name: name,
-      username: username,
-      email: email,
-      role: kRoleOwner,
-      password: password,
-    );
-    _accounts.add(a);
-    _currentId = a.id;
-    await _save();
-    notifyListeners();
-  }
-
-  /// เข้าสู่ระบบด้วยชื่อผู้ใช้หรืออีเมล — ผิดเกินจำนวนที่ตั้งไว้จะล็อก 5 นาที
+  /// เข้าสู่ระบบด้วยอีเมลและรหัสผ่าน — ต้องเป็นแอดมินเท่านั้น
   Future<void> login(
-    String usernameOrEmail,
+    String email,
     String password, {
     bool remember = false,
   }) async {
-    await load();
     final until = lockedUntil;
     if (until != null) {
       final mins = until.difference(DateTime.now()).inMinutes + 1;
@@ -296,156 +200,94 @@ class AdminAuth extends ChangeNotifier {
         'ใส่รหัสผ่านผิดหลายครั้ง กรุณาลองใหม่ในอีก $mins นาที',
       );
     }
-    final a = _find(usernameOrEmail);
-    if (a == null || !_check(a, password)) {
-      await SettingsStore.instance.load();
-      final max = SettingsStore.instance.number('max_login_attempts');
-      _failed++;
-      if (_failed >= max) {
-        _failed = 0;
-        _lockedUntil = DateTime.now().add(lockDuration);
-        await _saveLock();
-        throw AuthException(
-          'ใส่รหัสผ่านผิดครบ $max ครั้ง ระบบล็อกการเข้าสู่ระบบไว้ 5 นาที',
-        );
-      }
-      await _saveLock();
-      throw AuthException(
-        'ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง (เหลืออีก ${max - _failed} ครั้ง)',
-      );
+    final String id;
+    try {
+      id = await _b.signIn(email.trim(), password);
+    } on AuthException catch (e) {
+      throw await _failure(e.message);
     }
-    if (!a.active) {
-      throw const AuthException('บัญชีนี้ถูกระงับ กรุณาติดต่อผู้ดูแลหลัก');
+    final p = await _b.fetchProfile(id);
+    if (p == null || !p.isAdmin) {
+      await _b.signOut();
+      throw const AuthException(
+        'บัญชีนี้ไม่มีสิทธิ์ผู้ดูแลระบบ กรุณาติดต่อผู้ดูแลหลัก',
+      );
     }
     _failed = 0;
     _lockedUntil = null;
     await _saveLock();
-    _currentId = a.id;
     final prefs = await SharedPreferences.getInstance();
-    if (remember) {
-      await prefs.setString(_sessionKey, a.id);
-    } else {
-      await prefs.remove(_sessionKey);
-    }
+    await prefs.setBool(_rememberKey, remember);
+    _current = p;
     notifyListeners();
   }
 
   Future<void> logout() async {
-    _currentId = null;
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.remove(_sessionKey);
+    _current = null;
+    _admins = [];
+    notifyListeners();
+    try {
+      await _backend?.signOut();
+    } catch (e) {
+      debugPrint('ออกจากระบบไม่สำเร็จ: $e');
+    }
+  }
+
+  Future<void> updateProfile({required String name, required String phone}) async {
+    final me = _requireMe();
+    await _b.updateProfile(me.id, name: name.trim(), phone: phone.trim());
+    _current = await _b.fetchProfile(me.id) ?? me;
     notifyListeners();
   }
 
-  void _replace(AdminAccount updated) {
-    final i = _accounts.indexWhere((a) => a.id == updated.id);
-    _accounts[i] = updated;
-  }
-
-  /// แก้ข้อมูลของบัญชีที่เข้าสู่ระบบอยู่
-  Future<void> updateProfile({
-    required String name,
-    required String email,
-    required String phone,
-  }) async {
-    final me = current;
-    if (me == null) throw const AuthException('กรุณาเข้าสู่ระบบ');
-    _checkUnique(me.username, email, exceptId: me.id);
-    _replace(
-      me.copyWith(name: name.trim(), email: email.trim(), phone: phone.trim()),
-    );
-    await _save();
-    notifyListeners();
-  }
-
-  Future<void> changePassword(
-    String currentPassword,
-    String newPassword,
-  ) async {
-    final me = current;
-    if (me == null) throw const AuthException('กรุณาเข้าสู่ระบบ');
-    if (!_check(me, currentPassword)) {
+  /// เปลี่ยนรหัสผ่าน — ตรวจรหัสเดิมก่อน (ลองเข้าสู่ระบบด้วยรหัสเดิม)
+  Future<void> changePassword(String currentPassword, String newPassword) async {
+    final me = _requireMe();
+    try {
+      await _b.signIn(me.email, currentPassword);
+    } on AuthException {
       throw const AuthException('รหัสผ่านปัจจุบันไม่ถูกต้อง');
     }
-    final salt = _newSalt();
-    _replace(me.copyWith(salt: salt, hash: _hash(newPassword, salt)));
-    await _save();
+    await _b.updatePassword(newPassword);
+  }
+
+  /// ส่งอีเมลให้ตั้งรหัสผ่านใหม่ (ใช้ตอนแอดมินลืมรหัส)
+  Future<void> sendPasswordReset(String email) => _b.sendPasswordReset(email);
+
+  AdminProfile _requireMe() {
+    final me = _current;
+    if (me == null) throw const AuthException('กรุณาเข้าสู่ระบบ');
+    return me;
+  }
+
+  /// โหลดรายชื่อผู้ดูแลใหม่ และอัปเดตสิทธิ์ของตัวเองด้วย
+  /// (เช่น เพิ่งถูกตั้งเป็นผู้ดูแลหลักใน Supabase ไม่ต้องออกแล้วเข้าใหม่)
+  Future<void> refreshAdmins() async {
+    final me = _current;
+    if (me != null) {
+      final fresh = await _b.fetchProfile(me.id);
+      if (fresh == null || !fresh.isAdmin) {
+        // ถูกถอดสิทธิ์ระหว่างใช้งาน
+        await logout();
+        throw const AuthException('บัญชีนี้ไม่มีสิทธิ์ผู้ดูแลระบบแล้ว');
+      }
+      _current = fresh;
+    }
+    _admins = await _b.listAdmins();
     notifyListeners();
   }
 
-  void _requireOwner() {
-    if (current?.isOwner != true) {
+  /// ผู้ดูแลหลักเพิ่มแอดมิน / เปลี่ยนสิทธิ์ / ถอดสิทธิ์ (role = user)
+  Future<void> setRole(String email, String role) async {
+    if (_current?.isOwner != true) {
       throw const AuthException('เฉพาะผู้ดูแลหลักเท่านั้นที่ทำรายการนี้ได้');
     }
+    await _b.setRoleByEmail(email.trim(), role);
+    await refreshAdmins();
   }
 
-  /// ผู้ดูแลหลักเพิ่มแอดมินใหม่ พร้อมรหัสผ่านชั่วคราว
-  Future<void> addAdmin({
-    required String name,
-    required String username,
-    required String email,
-    required String role,
-    required String password,
-  }) async {
-    _requireOwner();
-    _checkUnique(username, email);
-    _accounts.add(
-      _newAccount(
-        name: name,
-        username: username,
-        email: email,
-        role: role,
-        password: password,
-      ),
-    );
-    await _save();
-    notifyListeners();
-  }
-
-  /// ต้องเหลือผู้ดูแลหลักที่ใช้งานได้อย่างน้อย 1 คนเสมอ
-  void _keepOneOwner(AdminAccount changing) {
-    final others = _accounts.where(
-      (a) => a.id != changing.id && a.isOwner && a.active,
-    );
-    if (changing.isOwner && others.isEmpty) {
-      throw const AuthException('ต้องมีผู้ดูแลหลักที่ใช้งานได้อย่างน้อย 1 คน');
-    }
-  }
-
-  Future<void> setRole(AdminAccount a, String role) async {
-    _requireOwner();
-    if (role != kRoleOwner) _keepOneOwner(a);
-    _replace(a.copyWith(role: role));
-    await _save();
-    notifyListeners();
-  }
-
-  Future<void> setActive(AdminAccount a, bool active) async {
-    _requireOwner();
-    if (a.id == _currentId) {
-      throw const AuthException('ระงับบัญชีของตัวเองไม่ได้');
-    }
-    if (!active) _keepOneOwner(a);
-    _replace(a.copyWith(active: active));
-    await _save();
-    notifyListeners();
-  }
-
-  /// ผู้ดูแลหลักตั้งรหัสผ่านใหม่ให้แอดมินที่ลืมรหัส
-  Future<void> resetPassword(AdminAccount a, String newPassword) async {
-    _requireOwner();
-    final salt = _newSalt();
-    _replace(a.copyWith(salt: salt, hash: _hash(newPassword, salt)));
-    await _save();
-    notifyListeners();
-  }
-
-  Future<void> remove(AdminAccount a) async {
-    _requireOwner();
-    if (a.id == _currentId) throw const AuthException('ลบบัญชีของตัวเองไม่ได้');
-    _keepOneOwner(a);
-    _accounts.removeWhere((x) => x.id == a.id);
-    await _save();
-    notifyListeners();
+  static String? validatePassword(String? v) {
+    if ((v ?? '').length < 8) return 'รหัสผ่านต้องมีอย่างน้อย 8 ตัว';
+    return null;
   }
 }

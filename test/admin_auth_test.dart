@@ -3,157 +3,127 @@ import 'package:admin_a2h/services/settings_store.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'support/fake_auth_backend.dart';
+
 void main() {
   late AdminAuth auth;
+  late FakeAuthBackend backend;
 
   setUp(() {
     SharedPreferences.setMockInitialValues({});
     SettingsStore.instance.debugReset();
-    auth = AdminAuth.instance..debugReset();
+    backend = FakeAuthBackend()
+      ..addUser('o1', 'owner@a2.co.th', 'password123', role: kRoleOwner, name: 'Owner')
+      ..addUser('a1', 'staff@a2.co.th', 'staffpass1', role: kRoleAdmin)
+      ..addUser('c1', 'customer@gmail.com', 'custpass12');
+    auth = AdminAuth.instance
+      ..debugReset()
+      ..useBackend(backend);
   });
 
-  test('first owner, login, wrong password lockout', () async {
-    await auth.load();
-    expect(auth.hasAdmins, isFalse);
-
-    await auth.createFirstOwner(
-      name: 'สมศรี',
-      username: 'somsri',
-      email: 'somsri@a2.co.th',
-      password: 'password123',
+  test('only admins can log in; customers are signed out again', () async {
+    await expectLater(
+      auth.login('customer@gmail.com', 'custpass12'),
+      throwsA(isA<AuthException>().having((e) => e.message, 'm', contains('ไม่มีสิทธิ์'))),
     );
+    expect(auth.current, isNull);
+    expect(backend.sessionUserId, isNull);
+
+    await auth.login('OWNER@a2.co.th', 'password123');
     expect(auth.current?.isOwner, isTrue);
-    // รหัสผ่านไม่ได้เก็บตรง ๆ
-    expect(auth.current!.hash.contains('password123'), isFalse);
-
-    // สร้างคนแรกซ้ำไม่ได้
-    expect(
-      () => auth.createFirstOwner(
-        name: 'x',
-        username: 'x',
-        email: '',
-        password: 'password123',
-      ),
-      throwsA(isA<AuthException>()),
-    );
+    expect(auth.name, 'Owner');
 
     await auth.logout();
     expect(auth.current, isNull);
+    expect(backend.sessionUserId, isNull);
+  });
 
-    await auth.login('SOMSRI@a2.co.th', 'password123'); // อีเมลก็ได้
-    expect(auth.current?.username, 'somsri');
-    await auth.logout();
-
-    // ผิด 5 ครั้ง (ค่าเริ่มต้น) = ล็อก
+  test('wrong password counts down and locks after 5 tries', () async {
     for (var i = 0; i < 4; i++) {
       await expectLater(
-        auth.login('somsri', 'wrong-pass'),
-        throwsA(isA<AuthException>()),
+        auth.login('owner@a2.co.th', 'nope'),
+        throwsA(isA<AuthException>().having((e) => e.message, 'm', contains('เหลืออีก'))),
       );
     }
     await expectLater(
-      auth.login('somsri', 'wrong-pass'),
-      throwsA(
-        isA<AuthException>().having((e) => e.message, 'm', contains('ล็อก')),
-      ),
+      auth.login('owner@a2.co.th', 'nope'),
+      throwsA(isA<AuthException>().having((e) => e.message, 'm', contains('ล็อก'))),
     );
-    expect(auth.lockedUntil, isNotNull);
     // ถึงรหัสถูกก็เข้าไม่ได้ระหว่างล็อก
     await expectLater(
-      auth.login('somsri', 'password123'),
+      auth.login('owner@a2.co.th', 'password123'),
       throwsA(isA<AuthException>()),
     );
   });
 
-  test('owner adds admins; admin cannot; keep one owner', () async {
-    await auth.createFirstOwner(
-      name: 'Owner',
-      username: 'owner',
-      email: 'owner@a2.co.th',
-      password: 'password123',
-    );
-    final owner = auth.current!;
+  test('owner manages admins; admin cannot', () async {
+    await auth.login('owner@a2.co.th', 'password123');
+    await auth.refreshAdmins();
+    expect(auth.admins.length, 2);
 
-    await auth.addAdmin(
-      name: 'Staff',
-      username: 'staff',
+    await auth.setRole('customer@gmail.com', kRoleAdmin);
+    expect(auth.admins.map((a) => a.email), contains('customer@gmail.com'));
+
+    await expectLater(
+      auth.setRole('nobody@x.com', kRoleAdmin),
+      throwsA(isA<AuthException>().having((e) => e.message, 'm', contains('ไม่พบ'))),
+    );
+    await expectLater(
+      auth.setRole('owner@a2.co.th', kRoleUser),
+      throwsA(isA<AuthException>()), // เปลี่ยนสิทธิ์ตัวเองไม่ได้
+    );
+
+    await auth.setRole('customer@gmail.com', kRoleUser); // ถอดสิทธิ์
+    expect(auth.admins.length, 2);
+
+    await auth.logout();
+    await auth.login('staff@a2.co.th', 'staffpass1');
+    await expectLater(
+      auth.setRole('customer@gmail.com', kRoleAdmin),
+      throwsA(isA<AuthException>()),
+    );
+  });
+
+  test('refresh picks up a role change made in Supabase', () async {
+    await auth.login('staff@a2.co.th', 'staffpass1');
+    expect(auth.current?.isOwner, isFalse);
+    backend.profiles['a1'] = const AdminProfile(
+      id: 'a1',
       email: 'staff@a2.co.th',
-      role: kRoleAdmin,
-      password: 'temp-pass-1',
+      name: '',
+      phone: '',
+      role: kRoleOwner,
     );
-    expect(auth.accounts.length, 2);
-
-    // ชื่อผู้ใช้ซ้ำไม่ได้
-    expect(
-      () => auth.addAdmin(
-        name: 'dup',
-        username: 'STAFF',
-        email: '',
-        role: kRoleAdmin,
-        password: 'temp-pass-1',
-      ),
-      throwsA(isA<AuthException>()),
-    );
-
-    // ลบ/ระงับตัวเองไม่ได้
-    expect(() => auth.remove(owner), throwsA(isA<AuthException>()));
-
-    // แอดมินธรรมดาเพิ่มคนอื่นไม่ได้
-    await auth.logout();
-    await auth.login('staff', 'temp-pass-1');
-    expect(
-      () => auth.addAdmin(
-        name: 'n',
-        username: 'nnn',
-        email: '',
-        role: kRoleAdmin,
-        password: 'temp-pass-1',
-      ),
-      throwsA(isA<AuthException>()),
-    );
-
-    // เปลี่ยนรหัสผ่านตัวเอง
-    await expectLater(
-      auth.changePassword('wrong', 'new-pass-123'),
-      throwsA(isA<AuthException>()),
-    );
-    await auth.changePassword('temp-pass-1', 'new-pass-123');
-    await auth.logout();
-    await auth.login('staff', 'new-pass-123');
-
-    // ผู้ดูแลหลักระงับ staff แล้ว staff เข้าไม่ได้
-    await auth.logout();
-    await auth.login('owner', 'password123');
-    final staff = auth.accounts.firstWhere((a) => a.username == 'staff');
-    await auth.setActive(staff, false);
-    await auth.logout();
-    await expectLater(
-      auth.login('staff', 'new-pass-123'),
-      throwsA(
-        isA<AuthException>().having((e) => e.message, 'm', contains('ระงับ')),
-      ),
-    );
-
-    // ลดสิทธิ์ผู้ดูแลหลักคนสุดท้ายไม่ได้
-    await auth.login('owner', 'password123');
-    expect(
-      () => auth.setRole(auth.current!, kRoleAdmin),
-      throwsA(isA<AuthException>()),
-    );
+    await auth.refreshAdmins();
+    expect(auth.current?.isOwner, isTrue);
   });
 
-  test('remember login survives reload', () async {
-    await auth.createFirstOwner(
-      name: 'Owner',
-      username: 'owner',
-      email: '',
-      password: 'password123',
+  test('change password checks the current one', () async {
+    await auth.login('staff@a2.co.th', 'staffpass1');
+    await expectLater(
+      auth.changePassword('wrong', 'newpass123'),
+      throwsA(isA<AuthException>()),
     );
+    await auth.changePassword('staffpass1', 'newpass123');
     await auth.logout();
-    await auth.login('owner', 'password123', remember: true);
+    await auth.login('staff@a2.co.th', 'newpass123');
+    expect(auth.current?.email, 'staff@a2.co.th');
+  });
 
-    auth.debugReset(); // จำลองการรีเฟรชหน้าเว็บ
+  test('remember me keeps the session after reload; otherwise signs out', () async {
+    await auth.login('owner@a2.co.th', 'password123', remember: true);
+    auth
+      ..debugReset()
+      ..useBackend(backend); // จำลองรีเฟรชหน้าเว็บ
     await auth.load();
-    expect(auth.current?.username, 'owner');
+    expect(auth.current?.email, 'owner@a2.co.th');
+
+    await auth.login('owner@a2.co.th', 'password123');
+    auth
+      ..debugReset()
+      ..useBackend(backend);
+    await auth.load();
+    expect(auth.current, isNull);
+    expect(backend.sessionUserId, isNull);
   });
 }

@@ -5,6 +5,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'support/fake_auth_backend.dart';
+
 void main() {
   testWidgets('settings: 6 cards, company info and toggles are saved', (
     tester,
@@ -16,15 +18,12 @@ void main() {
     SharedPreferences.setMockInitialValues({});
     final store = SettingsStore.instance..debugReset();
     await tester.runAsync(store.load);
-    final auth = AdminAuth.instance..debugReset();
-    await tester.runAsync(
-      () => auth.createFirstOwner(
-        name: 'Owner',
-        username: 'owner',
-        email: 'owner@a2.co.th',
-        password: 'password123',
-      ),
-    );
+    final backend = FakeAuthBackend()
+      ..addUser('o1', 'owner@a2.co.th', 'password123', role: kRoleOwner, name: 'Owner');
+    final auth = AdminAuth.instance
+      ..debugReset()
+      ..useBackend(backend);
+    await tester.runAsync(() => auth.login('owner@a2.co.th', 'password123'));
 
     await tester.pumpWidget(
       MaterialApp(
@@ -76,15 +75,16 @@ void main() {
     await tester.tap(find.text('บัญชีผู้ดูแลระบบ'));
     await tester.pumpAndSettle();
     final f = find.byType(TextFormField);
-    await tester.enterText(f.at(3), 'oldpass');
-    await tester.enterText(f.at(4), 'newpassword');
-    await tester.enterText(f.at(5), 'different1');
+    await tester.enterText(f.at(2), 'oldpass');
+    await tester.enterText(f.at(3), 'newpassword');
+    await tester.enterText(f.at(4), 'different1');
     await tester.tap(find.text('บันทึก'));
     await tester.pump();
     expect(find.text('รหัสผ่านไม่ตรงกัน'), findsOneWidget);
 
     // แท็บผู้ดูแลระบบทั้งหมด: ผู้ดูแลหลักเห็นปุ่มเพิ่ม
     await tester.tap(find.text('ผู้ดูแลระบบทั้งหมด'));
+    await tester.runAsync(() => Future.delayed(Duration.zero));
     await tester.pumpAndSettle();
     expect(find.text('Owner (คุณ)'), findsOneWidget);
     expect(find.text('เพิ่มผู้ดูแลระบบ'), findsOneWidget);

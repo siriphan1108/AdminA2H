@@ -558,9 +558,18 @@ class _AddProjectPageState extends State<AddProjectPage> {
     );
 
     final old = widget.editing;
-    final warning = old == null
-        ? await ProjectStore.instance.add(project)
-        : await ProjectStore.instance.update(old, project);
+    final String? warning;
+    try {
+      warning = old == null
+          ? await ProjectStore.instance.add(project)
+          : await ProjectStore.instance.update(old, project);
+    } on ProjectSaveException catch (e) {
+      // บันทึกขึ้นเซิร์ฟเวอร์ไม่สำเร็จ: อยู่หน้าฟอร์มต่อ ข้อมูลที่กรอกไม่หาย
+      if (!mounted) return;
+      setState(() => _saving = false);
+      _snack(e.message);
+      return;
+    }
     if (!mounted) return;
     setState(() => _saving = false);
     _snack(

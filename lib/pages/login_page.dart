@@ -32,24 +32,17 @@ class LoginPage extends StatelessWidget {
                   painter: LoginBackgroundPainter(split: wide),
                 ),
               ),
-              // ยังไม่มีแอดมินเลย = หน้าสร้างผู้ดูแลหลักคนแรก
-              ListenableBuilder(
-                listenable: AdminAuth.instance,
-                builder: (context, _) {
-                  final card = _Scrollable(
-                    child: AdminAuth.instance.hasAdmins
-                        ? const LoginCard()
-                        : const SetupCard(),
-                  );
-                  if (!wide) return Center(child: card);
-                  return Row(
-                    children: [
-                      const Expanded(child: _HeroPanel()),
-                      Expanded(child: Center(child: card)),
-                    ],
-                  );
-                },
-              ),
+              if (wide)
+                const Row(
+                  children: [
+                    Expanded(child: _HeroPanel()),
+                    Expanded(
+                      child: Center(child: _Scrollable(child: LoginCard())),
+                    ),
+                  ],
+                )
+              else
+                const Center(child: _Scrollable(child: LoginCard())),
             ],
           );
         },
@@ -147,6 +140,7 @@ class _LoginCardState extends State<LoginCard> {
   final _formKey = GlobalKey<FormState>();
   final _usernameCtrl = TextEditingController();
   final _passwordCtrl = TextEditingController();
+  final _passwordFocus = FocusNode();
   bool _obscure = true;
   bool _remember = false;
   bool _loading = false;
@@ -156,6 +150,7 @@ class _LoginCardState extends State<LoginCard> {
   void dispose() {
     _usernameCtrl.dispose();
     _passwordCtrl.dispose();
+    _passwordFocus.dispose();
     super.dispose();
   }
 
@@ -176,6 +171,18 @@ class _LoginCardState extends State<LoginCard> {
         setState(() {
           _loading = false;
           _error = e.message;
+        });
+        // ล้างรหัสที่ผิด แล้วให้พิมพ์ใหม่ได้ทันที
+        _passwordCtrl.clear();
+        _passwordFocus.requestFocus();
+      }
+      return;
+    } catch (e) {
+      // เช่น เน็ตหลุด / เชื่อมต่อ Supabase ไม่ได้
+      if (mounted) {
+        setState(() {
+          _loading = false;
+          _error = 'เชื่อมต่อระบบไม่ได้ กรุณาตรวจสอบอินเทอร์เน็ตแล้วลองใหม่';
         });
       }
       return;
@@ -247,17 +254,23 @@ class _LoginCardState extends State<LoginCard> {
               const SizedBox(height: 28),
               TextFormField(
                 controller: _usernameCtrl,
-                autofillHints: const [AutofillHints.username],
+                autofillHints: const [AutofillHints.email],
+                keyboardType: TextInputType.emailAddress,
                 textInputAction: TextInputAction.next,
-                decoration: _decoration('ชื่อผู้ใช้หรืออีเมล', Icons.person),
+                decoration: _decoration('อีเมล (Email)', Icons.person),
                 validator: (v) => (v == null || v.trim().isEmpty)
-                    ? 'กรุณากรอกชื่อผู้ใช้'
+                    ? 'กรุณากรอกอีเมล'
                     : null,
               ),
               const SizedBox(height: 18),
               TextFormField(
                 controller: _passwordCtrl,
+                focusNode: _passwordFocus,
                 obscureText: _obscure,
+                // พิมพ์ใหม่แล้วซ่อนข้อความแจ้งรหัสผิด
+                onChanged: (_) {
+                  if (_error != null) setState(() => _error = null);
+                },
                 autofillHints: const [AutofillHints.password],
                 textInputAction: TextInputAction.done,
                 onFieldSubmitted: (_) => _submit(),
@@ -332,233 +345,6 @@ class _ErrorBox extends StatelessWidget {
             ),
           ),
         ],
-      ),
-    );
-  }
-}
-
-/// สร้างผู้ดูแลหลักคนแรก — แสดงเฉพาะตอนที่ยังไม่มีแอดมินในระบบเลย
-class SetupCard extends StatefulWidget {
-  const SetupCard({super.key});
-
-  @override
-  State<SetupCard> createState() => _SetupCardState();
-}
-
-class _SetupCardState extends State<SetupCard> {
-  final _formKey = GlobalKey<FormState>();
-  final _name = TextEditingController();
-  final _username = TextEditingController();
-  final _email = TextEditingController();
-  final _password = TextEditingController();
-  final _confirm = TextEditingController();
-  bool _obscure = true;
-  bool _loading = false;
-  String? _error;
-
-  @override
-  void dispose() {
-    for (final c in [_name, _username, _email, _password, _confirm]) {
-      c.dispose();
-    }
-    super.dispose();
-  }
-
-  Future<void> _submit() async {
-    if (_loading || !_formKey.currentState!.validate()) return;
-    setState(() {
-      _loading = true;
-      _error = null;
-    });
-    try {
-      await AdminAuth.instance.createFirstOwner(
-        name: _name.text,
-        username: _username.text,
-        email: _email.text,
-        password: _password.text,
-      );
-    } on AuthException catch (e) {
-      if (mounted) {
-        setState(() {
-          _loading = false;
-          _error = e.message;
-        });
-      }
-      return;
-    }
-    if (!mounted) return;
-    Navigator.of(context).pushReplacement(
-      MaterialPageRoute<void>(builder: (_) => const DashboardPage()),
-    );
-  }
-
-  Widget _field(
-    TextEditingController c,
-    String hint,
-    IconData icon, {
-    bool password = false,
-    String? Function(String?)? validator,
-    bool last = false,
-  }) {
-    OutlineInputBorder border(Color col, [double w = 1]) => OutlineInputBorder(
-      borderRadius: BorderRadius.circular(12),
-      borderSide: BorderSide(color: col, width: w),
-    );
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 14),
-      child: TextFormField(
-        controller: c,
-        obscureText: password && _obscure,
-        textInputAction: last ? TextInputAction.done : TextInputAction.next,
-        onFieldSubmitted: last ? (_) => _submit() : null,
-        validator: validator,
-        decoration: InputDecoration(
-          hintText: hint,
-          hintStyle: const TextStyle(color: AppColors.hint, fontSize: 15),
-          prefixIcon: Icon(icon, color: AppColors.navy),
-          suffixIcon: password
-              ? IconButton(
-                  tooltip: _obscure ? 'แสดงรหัสผ่าน' : 'ซ่อนรหัสผ่าน',
-                  icon: Icon(
-                    _obscure
-                        ? Icons.visibility_off_outlined
-                        : Icons.visibility_outlined,
-                    color: AppColors.navy,
-                  ),
-                  onPressed: () => setState(() => _obscure = !_obscure),
-                )
-              : null,
-          filled: true,
-          fillColor: Colors.white,
-          contentPadding: const EdgeInsets.symmetric(vertical: 16),
-          enabledBorder: border(AppColors.border),
-          focusedBorder: border(AppColors.primary, 1.6),
-          errorBorder: border(Colors.red.shade300),
-          focusedErrorBorder: border(Colors.red, 1.6),
-        ),
-      ),
-    );
-  }
-
-  static String? _req(String? v, String msg) =>
-      (v ?? '').trim().isEmpty ? msg : null;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      constraints: const BoxConstraints(maxWidth: 460),
-      padding: const EdgeInsets.fromLTRB(36, 34, 36, 32),
-      decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.95),
-        borderRadius: BorderRadius.circular(28),
-        border: Border.all(color: Colors.white),
-        boxShadow: [
-          BoxShadow(
-            color: AppColors.navy.withValues(alpha: 0.18),
-            blurRadius: 40,
-            offset: const Offset(0, 18),
-          ),
-        ],
-      ),
-      child: Form(
-        key: _formKey,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            const Center(child: A2Logo(color: AppColors.navy, width: 100)),
-            const SizedBox(height: 14),
-            const Text(
-              'ตั้งค่าครั้งแรก',
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                color: AppColors.navy,
-                fontSize: 28,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-            const SizedBox(height: 4),
-            const Text(
-              'สร้างบัญชีผู้ดูแลหลัก เพื่อใช้เข้าสู่ระบบและเพิ่มผู้ดูแลคนอื่น',
-              textAlign: TextAlign.center,
-              style: TextStyle(color: AppColors.hint, fontSize: 14),
-            ),
-            const SizedBox(height: 22),
-            _field(
-              _name,
-              'ชื่อที่แสดง',
-              Icons.badge_outlined,
-              validator: (v) => _req(v, 'กรุณากรอกชื่อ'),
-            ),
-            _field(
-              _username,
-              'ชื่อผู้ใช้ (Username)',
-              Icons.person,
-              validator: (v) {
-                final t = (v ?? '').trim();
-                if (t.isEmpty) return 'กรุณากรอกชื่อผู้ใช้';
-                if (!RegExp(r'^[A-Za-z0-9._-]{3,}$').hasMatch(t)) {
-                  return 'ใช้ a-z, 0-9, . _ - อย่างน้อย 3 ตัว';
-                }
-                return null;
-              },
-            ),
-            _field(
-              _email,
-              'อีเมล',
-              Icons.mail_outline_rounded,
-              validator: (v) {
-                final t = (v ?? '').trim();
-                if (t.isEmpty) return 'กรุณากรอกอีเมล';
-                return RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$').hasMatch(t)
-                    ? null
-                    : 'รูปแบบอีเมลไม่ถูกต้อง';
-              },
-            ),
-            _field(
-              _password,
-              'รหัสผ่าน (อย่างน้อย 8 ตัว)',
-              Icons.lock,
-              password: true,
-              validator: AdminAuth.validatePassword,
-            ),
-            _field(
-              _confirm,
-              'ยืนยันรหัสผ่าน',
-              Icons.lock_outline,
-              password: true,
-              last: true,
-              validator: (v) =>
-                  v != _password.text ? 'รหัสผ่านไม่ตรงกัน' : null,
-            ),
-            if (_error != null) _ErrorBox(_error!),
-            const SizedBox(height: 12),
-            FilledButton(
-              onPressed: _loading ? null : _submit,
-              style: FilledButton.styleFrom(
-                backgroundColor: AppColors.primary,
-                minimumSize: const Size.fromHeight(54),
-                textStyle: const TextStyle(
-                  fontSize: 17,
-                  fontWeight: FontWeight.w600,
-                ),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(14),
-                ),
-              ),
-              child: _loading
-                  ? const SizedBox(
-                      width: 22,
-                      height: 22,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2.5,
-                        color: Colors.white,
-                      ),
-                    )
-                  : const Text('สร้างบัญชีและเข้าสู่ระบบ'),
-            ),
-          ],
-        ),
       ),
     );
   }

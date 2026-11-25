@@ -7,12 +7,51 @@ import '../models/project.dart';
 
 /// ที่เก็บโครงการของระบบแอดมิน
 ///
-/// ตอนนี้ยังไม่มี backend จึงเก็บใน localStorage ของเบราว์เซอร์
-/// (รูปเก็บเป็น base64, พื้นที่ประมาณ 5MB) — ข้อมูลนี้ยังไม่เชื่อมกับแอป HomeConnect
-/// TODO: เปลี่ยนเป็นการเรียก API เมื่อมี backend
+/// ใช้งานจริง: เก็บใน Supabase (ตาราง projects / project_units / project_images)
+/// ตอนเทสต์: เก็บใน localStorage ของเบราว์เซอร์ (รูปเก็บเป็น base64)
+/// ที่เก็บโครงการบนเซิร์ฟเวอร์ (ของจริง = Supabase)
+abstract class ProjectBackend {
+  Future<List<NewProject>> loadAll();
+
+  /// บันทึกโครงการใหม่ แล้วตั้งค่า [NewProject.id]
+  Future<void> insert(NewProject p);
+  Future<void> update(NewProject old, NewProject p);
+  Future<void> delete(NewProject p);
+}
+
+/// บันทึกขึ้นเซิร์ฟเวอร์ไม่สำเร็จ — [message] เป็นภาษาไทยสำหรับแสดงผู้ใช้
+class ProjectSaveException implements Exception {
+  const ProjectSaveException(this.message);
+  final String message;
+  @override
+  String toString() => message;
+}
+
 class ProjectStore extends ChangeNotifier {
   ProjectStore._();
   static final ProjectStore instance = ProjectStore._();
+
+  /// ถ้าตั้งไว้ (main.dart) ข้อมูลจะอยู่บนเซิร์ฟเวอร์และขึ้นในแอป HomeConnect
+  /// ถ้าไม่ตั้ง (ตอนเทสต์) เก็บใน localStorage ของเบราว์เซอร์แบบเดิม
+  ProjectBackend? _remote;
+
+  void useBackend(ProjectBackend backend) {
+    _remote = backend;
+    _items.clear();
+    _loading = null;
+  }
+
+  /// ข้อความเมื่อโหลดจากเซิร์ฟเวอร์ไม่สำเร็จ (null = ปกติ)
+  String? loadError;
+
+  /// โหลดใหม่จากเซิร์ฟเวอร์ (เช่น หลังเข้าสู่ระบบ)
+  Future<void> reload() {
+    _items.clear();
+    _loading = null;
+    return load();
+  }
+
+  static String _err(Object e) => 'บันทึกขึ้นเซิร์ฟเวอร์ไม่สำเร็จ: $e';
 
   static const _prefsKey = 'admin_a2h_projects_v1';
 
@@ -28,6 +67,21 @@ class ProjectStore extends ChangeNotifier {
   Future<void> load() => _loading ??= _load();
 
   Future<void> _load() async {
+    final remote = _remote;
+    if (remote != null) {
+      try {
+        final list = await remote.loadAll();
+        _items
+          ..clear()
+          ..addAll(list);
+        loadError = null;
+      } catch (e) {
+        loadError = 'โหลดโครงการจากเซิร์ฟเวอร์ไม่สำเร็จ: $e';
+        debugPrint(loadError);
+      }
+      notifyListeners();
+      return;
+    }
     try {
       final prefs = await SharedPreferences.getInstance();
       final raw = prefs.getString(_prefsKey);
@@ -49,6 +103,17 @@ class ProjectStore extends ChangeNotifier {
   /// เพิ่มโครงการ คืนข้อความเตือนถ้าบันทึกไม่สมบูรณ์ หรือ null ถ้าปกติ
   Future<String?> add(NewProject p) async {
     await load();
+    final remote = _remote;
+    if (remote != null) {
+      try {
+        await remote.insert(p);
+      } catch (e) {
+        throw ProjectSaveException(_err(e));
+      }
+      _items.insert(0, p);
+      notifyListeners();
+      return null;
+    }
     _items.insert(0, p);
     notifyListeners();
     return _persist(changed: p);
@@ -57,6 +122,22 @@ class ProjectStore extends ChangeNotifier {
   /// แก้ไขโครงการเดิม (แทนที่ตำแหน่งเดิมในรายการ)
   Future<String?> update(NewProject old, NewProject updated) async {
     await load();
+    final remote = _remote;
+    if (remote != null) {
+      try {
+        await remote.update(old, updated);
+      } catch (e) {
+        throw ProjectSaveException(_err(e));
+      }
+      final i = _items.indexOf(old);
+      if (i < 0) {
+        _items.insert(0, updated);
+      } else {
+        _items[i] = updated;
+      }
+      notifyListeners();
+      return null;
+    }
     final i = _items.indexOf(old);
     if (i < 0) return add(updated);
     _items[i] = updated;
@@ -67,6 +148,17 @@ class ProjectStore extends ChangeNotifier {
 
   Future<String?> remove(NewProject p) async {
     await load();
+    final remote = _remote;
+    if (remote != null) {
+      try {
+        await remote.delete(p);
+      } catch (e) {
+        return 'ลบไม่สำเร็จ: $e';
+      }
+      _items.remove(p);
+      notifyListeners();
+      return null;
+    }
     _items.remove(p);
     _imagesNotStored.remove(p);
     notifyListeners();

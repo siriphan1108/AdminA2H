@@ -1,7 +1,5 @@
-import 'dart:math';
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 
 import '../models/project.dart';
 import '../services/admin_auth.dart';
@@ -531,10 +529,7 @@ class _AccountDialog extends StatelessWidget {
                 labelColor: AppColors.blue,
                 unselectedLabelColor: AppColors.navy,
                 indicatorColor: AppColors.blue,
-                labelStyle: TextStyle(
-                  fontSize: 15,
-                  fontWeight: FontWeight.w700,
-                ),
+                labelStyle: TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
                 tabs: [
                   Tab(text: 'บัญชีของฉัน'),
                   Tab(text: 'ผู้ดูแลระบบทั้งหมด'),
@@ -554,7 +549,7 @@ class _AccountDialog extends StatelessWidget {
   }
 }
 
-/// แท็บ "บัญชีของฉัน": แก้ข้อมูลตัวเองและเปลี่ยนรหัสผ่าน
+/// แท็บ "บัญชีของฉัน": แก้ชื่อ เบอร์ และเปลี่ยนรหัสผ่าน (บัญชี Supabase)
 class _MyAccountTab extends StatefulWidget {
   const _MyAccountTab();
 
@@ -566,7 +561,6 @@ class _MyAccountTabState extends State<_MyAccountTab> {
   final _auth = AdminAuth.instance;
   final _formKey = GlobalKey<FormState>();
   late final _name = TextEditingController(text: _auth.current?.name);
-  late final _email = TextEditingController(text: _auth.current?.email);
   late final _phone = TextEditingController(text: _auth.current?.phone);
   final _currentPw = TextEditingController();
   final _newPw = TextEditingController();
@@ -577,7 +571,7 @@ class _MyAccountTabState extends State<_MyAccountTab> {
 
   @override
   void dispose() {
-    for (final c in [_name, _email, _phone, _currentPw, _newPw, _confirm]) {
+    for (final c in [_name, _phone, _currentPw, _newPw, _confirm]) {
       c.dispose();
     }
     super.dispose();
@@ -599,15 +593,17 @@ class _MyAccountTabState extends State<_MyAccountTab> {
       if (_changingPassword) {
         await _auth.changePassword(_currentPw.text, _newPw.text);
       }
-      await _auth.updateProfile(
-        name: _name.text,
-        email: _email.text,
-        phone: _phone.text,
-      );
+      await _auth.updateProfile(name: _name.text, phone: _phone.text);
     } on AuthException catch (e) {
       setState(() {
         _saving = false;
         _error = e.message;
+      });
+      return;
+    } catch (e) {
+      setState(() {
+        _saving = false;
+        _error = 'บันทึกไม่สำเร็จ: $e';
       });
       return;
     }
@@ -618,20 +614,17 @@ class _MyAccountTabState extends State<_MyAccountTab> {
     );
   }
 
-  Widget _pw(
-    TextEditingController c,
-    String label,
-    String? Function(String?) v,
-  ) => Padding(
-    padding: const EdgeInsets.only(bottom: 14),
-    child: TextFormField(
-      controller: c,
-      obscureText: !_show,
-      onChanged: (_) => setState(() {}),
-      decoration: _deco(label, Icons.lock_outline_rounded),
-      validator: v,
-    ),
-  );
+  Widget _pw(TextEditingController c, String label, String? Function(String?) v) =>
+      Padding(
+        padding: const EdgeInsets.only(bottom: 14),
+        child: TextFormField(
+          controller: c,
+          obscureText: !_show,
+          onChanged: (_) => setState(() {}),
+          decoration: _deco(label, Icons.lock_outline_rounded),
+          validator: v,
+        ),
+      );
 
   @override
   Widget build(BuildContext context) {
@@ -651,11 +644,20 @@ class _MyAccountTabState extends State<_MyAccountTab> {
                 children: [
                   Row(
                     children: [
-                      Text(
-                        '@${me.username}',
-                        style: const TextStyle(
-                          color: AppColors.hint,
-                          fontSize: 15,
+                      const Icon(
+                        Icons.mail_outline_rounded,
+                        size: 18,
+                        color: AppColors.hint,
+                      ),
+                      const SizedBox(width: 6),
+                      Flexible(
+                        child: Text(
+                          me.email,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: AppColors.navy,
+                            fontSize: 15,
+                          ),
                         ),
                       ),
                       const SizedBox(width: 10),
@@ -670,15 +672,6 @@ class _MyAccountTabState extends State<_MyAccountTab> {
                       decoration: _deco('ชื่อที่แสดง *', Icons.badge_outlined),
                       validator: (v) =>
                           (v ?? '').trim().isEmpty ? 'กรุณากรอกชื่อ' : null,
-                    ),
-                  ),
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 14),
-                    child: TextFormField(
-                      controller: _email,
-                      keyboardType: TextInputType.emailAddress,
-                      decoration: _deco('อีเมล', Icons.mail_outline_rounded),
-                      validator: _emailOrEmpty,
                     ),
                   ),
                   Padding(
@@ -741,43 +734,37 @@ Widget _errorText(String msg) => Padding(
   padding: const EdgeInsets.only(top: 4, bottom: 8),
   child: Text(
     msg,
-    style: const TextStyle(
-      color: Color(0xFFD32F2F),
-      fontWeight: FontWeight.w600,
-    ),
+    style: const TextStyle(color: Color(0xFFD32F2F), fontWeight: FontWeight.w600),
   ),
 );
 
-Widget _footer(
-  BuildContext context, {
-  VoidCallback? onSave,
-  String save = 'บันทึก',
-}) => Column(
-  children: [
-    const Divider(height: 1),
-    Padding(
-      padding: const EdgeInsets.fromLTRB(20, 12, 20, 16),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.end,
-        children: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('ยกเลิก'),
+Widget _footer(BuildContext context, {VoidCallback? onSave, String save = 'บันทึก'}) =>
+    Column(
+      children: [
+        const Divider(height: 1),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(20, 12, 20, 16),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.end,
+            children: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('ยกเลิก'),
+              ),
+              const SizedBox(width: 8),
+              FilledButton(
+                onPressed: onSave,
+                style: FilledButton.styleFrom(
+                  backgroundColor: AppColors.primary,
+                  minimumSize: const Size(130, 46),
+                ),
+                child: Text(save),
+              ),
+            ],
           ),
-          const SizedBox(width: 8),
-          FilledButton(
-            onPressed: onSave,
-            style: FilledButton.styleFrom(
-              backgroundColor: AppColors.primary,
-              minimumSize: const Size(130, 46),
-            ),
-            child: Text(save),
-          ),
-        ],
-      ),
-    ),
-  ],
-);
+        ),
+      ],
+    );
 
 class _AdminRoleChip extends StatelessWidget {
   const _AdminRoleChip(this.role);
@@ -803,7 +790,7 @@ class _AdminRoleChip extends StatelessWidget {
           ),
           const SizedBox(width: 4),
           Text(
-            role,
+            roleLabel(role),
             style: TextStyle(
               color: fg,
               fontSize: 12,
@@ -816,35 +803,68 @@ class _AdminRoleChip extends StatelessWidget {
   }
 }
 
-/// แท็บ "ผู้ดูแลระบบทั้งหมด": รายชื่อแอดมิน — ผู้ดูแลหลักเพิ่ม/ระงับ/ลบได้
-class _AdminsTab extends StatelessWidget {
+Future<void> _showError(BuildContext context, Object e) {
+  return showDialog<void>(
+    context: context,
+    builder: (ctx) => AlertDialog(
+      title: const Text('ทำรายการไม่ได้'),
+      content: Text(e is AuthException ? e.message : '$e'),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(ctx),
+          child: const Text('ตกลง'),
+        ),
+      ],
+    ),
+  );
+}
+
+/// แท็บ "ผู้ดูแลระบบทั้งหมด": รายชื่อจาก Supabase — ผู้ดูแลหลักเพิ่ม/ถอดสิทธิ์ได้
+class _AdminsTab extends StatefulWidget {
   const _AdminsTab();
 
-  Future<void> _run(
-    BuildContext context,
-    Future<void> Function() action,
-  ) async {
+  @override
+  State<_AdminsTab> createState() => _AdminsTabState();
+}
+
+class _AdminsTabState extends State<_AdminsTab> {
+  final _auth = AdminAuth.instance;
+  bool _loading = true;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _refresh();
+  }
+
+  Future<void> _refresh() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      await _auth.refreshAdmins();
+    } catch (e) {
+      _error = 'โหลดรายชื่อไม่สำเร็จ: $e';
+    }
+    if (mounted) setState(() => _loading = false);
+  }
+
+  Future<void> _run(Future<void> Function() action, {String? done}) async {
     try {
       await action();
-    } on AuthException catch (e) {
-      if (!context.mounted) return;
-      await showDialog<void>(
-        context: context,
-        builder: (ctx) => AlertDialog(
-          title: const Text('ทำรายการไม่ได้'),
-          content: Text(e.message),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx),
-              child: const Text('ตกลง'),
-            ),
-          ],
-        ),
-      );
+      if (done != null && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(done), behavior: SnackBarBehavior.floating),
+        );
+      }
+    } catch (e) {
+      if (mounted) await _showError(context, e);
     }
   }
 
-  Future<bool> _confirm(BuildContext context, String title, String body) async {
+  Future<bool> _confirm(String title, String body) async {
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -870,12 +890,12 @@ class _AdminsTab extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final auth = AdminAuth.instance;
     return ListenableBuilder(
-      listenable: auth,
+      listenable: _auth,
       builder: (context, _) {
-        final me = auth.current;
+        final me = _auth.current;
         final owner = me?.isOwner ?? false;
+        final admins = _auth.admins;
         return ListView(
           padding: const EdgeInsets.fromLTRB(28, 16, 28, 20),
           children: [
@@ -883,13 +903,18 @@ class _AdminsTab extends StatelessWidget {
               children: [
                 Expanded(
                   child: Text(
-                    'ผู้ดูแลระบบ ${auth.accounts.length} คน',
+                    _loading ? 'กำลังโหลด...' : 'ผู้ดูแลระบบ ${admins.length} คน',
                     style: const TextStyle(
                       color: AppColors.navy,
                       fontSize: 16,
                       fontWeight: FontWeight.w700,
                     ),
                   ),
+                ),
+                IconButton(
+                  tooltip: 'โหลดใหม่',
+                  onPressed: _loading ? null : _refresh,
+                  icon: const Icon(Icons.refresh_rounded),
                 ),
                 if (owner)
                   FilledButton.icon(
@@ -908,10 +933,11 @@ class _AdminsTab extends StatelessWidget {
             ),
             if (!owner)
               _note(
-                'เฉพาะผู้ดูแลหลักเท่านั้นที่เพิ่ม ระงับ หรือลบผู้ดูแลคนอื่นได้',
+                'เฉพาะผู้ดูแลหลักเท่านั้นที่เพิ่ม เปลี่ยนสิทธิ์ หรือถอดสิทธิ์ผู้ดูแลคนอื่นได้',
               ),
+            if (_error != null) _errorText(_error!),
             const SizedBox(height: 8),
-            for (final a in auth.accounts) ...[
+            for (final a in admins) ...[
               const Divider(height: 1, color: Color(0xFFE8EEF8)),
               Padding(
                 padding: const EdgeInsets.symmetric(vertical: 10),
@@ -919,11 +945,9 @@ class _AdminsTab extends StatelessWidget {
                   children: [
                     CircleAvatar(
                       radius: 22,
-                      backgroundColor: a.active
-                          ? AppColors.navy
-                          : const Color(0xFFB0B8C8),
+                      backgroundColor: AppColors.navy,
                       child: Text(
-                        a.name.isEmpty ? '?' : a.name.characters.first,
+                        a.displayName.characters.first.toUpperCase(),
                         style: const TextStyle(
                           color: Colors.white,
                           fontWeight: FontWeight.w700,
@@ -936,18 +960,17 @@ class _AdminsTab extends StatelessWidget {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            a.id == me?.id ? '${a.name} (คุณ)' : a.name,
-                            style: TextStyle(
-                              color: a.active ? AppColors.navy : AppColors.hint,
+                            a.id == me?.id
+                                ? '${a.displayName} (คุณ)'
+                                : a.displayName,
+                            style: const TextStyle(
+                              color: AppColors.navy,
                               fontSize: 15,
                               fontWeight: FontWeight.w700,
                             ),
                           ),
                           Text(
-                            [
-                              '@${a.username}',
-                              if (a.email.isNotEmpty) a.email,
-                            ].join(' · '),
+                            [a.email, if (a.phone.isNotEmpty) a.phone].join(' · '),
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: const TextStyle(
@@ -958,26 +981,6 @@ class _AdminsTab extends StatelessWidget {
                         ],
                       ),
                     ),
-                    if (!a.active)
-                      Container(
-                        margin: const EdgeInsets.only(right: 8),
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 10,
-                          vertical: 4,
-                        ),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFFE6E9EF),
-                          borderRadius: BorderRadius.circular(20),
-                        ),
-                        child: const Text(
-                          'ระงับใช้งาน',
-                          style: TextStyle(
-                            color: Color(0xFF4A5468),
-                            fontSize: 12,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ),
                     _AdminRoleChip(a.role),
                     SizedBox(
                       width: 44,
@@ -989,30 +992,25 @@ class _AdminsTab extends StatelessWidget {
                                 switch (v) {
                                   case 'role':
                                     await _run(
-                                      context,
-                                      () => auth.setRole(
-                                        a,
+                                      () => _auth.setRole(
+                                        a.email,
                                         a.isOwner ? kRoleAdmin : kRoleOwner,
                                       ),
                                     );
                                   case 'reset':
-                                    await showDialog<void>(
-                                      context: context,
-                                      builder: (_) => _ResetPasswordDialog(a),
-                                    );
-                                  case 'active':
                                     await _run(
-                                      context,
-                                      () => auth.setActive(a, !a.active),
+                                      () => _auth.sendPasswordReset(a.email),
+                                      done: 'ส่งอีเมลตั้งรหัสผ่านใหม่ไปที่ ${a.email} แล้ว',
                                     );
-                                  case 'delete':
+                                  case 'remove':
                                     if (await _confirm(
-                                      context,
-                                      'ลบผู้ดูแลระบบ?',
-                                      'ต้องการลบ "${a.name}" ใช่ไหม คนนี้จะเข้าสู่ระบบไม่ได้อีก',
+                                      'ถอดสิทธิ์ผู้ดูแลระบบ?',
+                                      '"${a.displayName}" จะเข้าเว็บแอดมินไม่ได้อีก '
+                                          '(บัญชียังใช้แอป HomeConnect ได้ตามปกติ)',
                                     )) {
-                                      if (!context.mounted) return;
-                                      await _run(context, () => auth.remove(a));
+                                      await _run(
+                                        () => _auth.setRole(a.email, kRoleUser),
+                                      );
                                     }
                                 }
                               },
@@ -1027,18 +1025,12 @@ class _AdminsTab extends StatelessWidget {
                                 ),
                                 const PopupMenuItem(
                                   value: 'reset',
-                                  child: Text('ตั้งรหัสผ่านใหม่'),
-                                ),
-                                PopupMenuItem(
-                                  value: 'active',
-                                  child: Text(
-                                    a.active ? 'ระงับใช้งาน' : 'เปิดใช้งาน',
-                                  ),
+                                  child: Text('ส่งอีเมลตั้งรหัสผ่านใหม่'),
                                 ),
                                 const PopupMenuItem(
-                                  value: 'delete',
+                                  value: 'remove',
                                   child: Text(
-                                    'ลบ',
+                                    'ถอดสิทธิ์ผู้ดูแลระบบ',
                                     style: TextStyle(color: Color(0xFFE53935)),
                                   ),
                                 ),
@@ -1057,46 +1049,7 @@ class _AdminsTab extends StatelessWidget {
   }
 }
 
-String _randomPassword() {
-  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789';
-  final r = Random.secure();
-  return List.generate(10, (_) => chars[r.nextInt(chars.length)]).join();
-}
-
-/// ช่องรหัสผ่านชั่วคราว + ปุ่มสุ่ม + ปุ่มคัดลอก
-class _TempPasswordField extends StatelessWidget {
-  const _TempPasswordField(this.controller);
-  final TextEditingController controller;
-
-  @override
-  Widget build(BuildContext context) {
-    return TextFormField(
-      controller: controller,
-      decoration: _deco('รหัสผ่านชั่วคราว *', Icons.key_rounded).copyWith(
-        helperText:
-            'ส่งรหัสนี้ให้ผู้ดูแลคนใหม่ แล้วให้เขาเปลี่ยนเองหลังเข้าสู่ระบบ',
-        suffixIcon: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            IconButton(
-              tooltip: 'สุ่มรหัสใหม่',
-              icon: const Icon(Icons.casino_outlined),
-              onPressed: () => controller.text = _randomPassword(),
-            ),
-            IconButton(
-              tooltip: 'คัดลอก',
-              icon: const Icon(Icons.copy_rounded),
-              onPressed: () =>
-                  Clipboard.setData(ClipboardData(text: controller.text)),
-            ),
-          ],
-        ),
-      ),
-      validator: AdminAuth.validatePassword,
-    );
-  }
-}
-
+/// เพิ่มผู้ดูแลระบบด้วยอีเมล (คนนั้นต้องมีบัญชีอยู่แล้ว)
 class _AddAdminDialog extends StatefulWidget {
   const _AddAdminDialog();
 
@@ -1106,34 +1059,31 @@ class _AddAdminDialog extends StatefulWidget {
 
 class _AddAdminDialogState extends State<_AddAdminDialog> {
   final _formKey = GlobalKey<FormState>();
-  final _name = TextEditingController();
-  final _username = TextEditingController();
   final _email = TextEditingController();
-  final _password = TextEditingController(text: _randomPassword());
   String _role = kRoleAdmin;
   String? _error;
+  bool _saving = false;
 
   @override
   void dispose() {
-    for (final c in [_name, _username, _email, _password]) {
-      c.dispose();
-    }
+    _email.dispose();
     super.dispose();
   }
 
   Future<void> _save() async {
-    if (!_formKey.currentState!.validate()) return;
+    if (_saving || !_formKey.currentState!.validate()) return;
+    setState(() {
+      _saving = true;
+      _error = null;
+    });
     final nav = Navigator.of(context);
     try {
-      await AdminAuth.instance.addAdmin(
-        name: _name.text,
-        username: _username.text,
-        email: _email.text,
-        role: _role,
-        password: _password.text,
-      );
-    } on AuthException catch (e) {
-      setState(() => _error = e.message);
+      await AdminAuth.instance.setRole(_email.text, _role);
+    } catch (e) {
+      setState(() {
+        _saving = false;
+        _error = e is AuthException ? e.message : '$e';
+      });
       return;
     }
     nav.pop();
@@ -1148,45 +1098,23 @@ class _AddAdminDialogState extends State<_AddAdminDialog> {
       onSave: _save,
       children: [
         const SizedBox(height: 6),
-        Padding(
-          padding: const EdgeInsets.only(bottom: 14),
-          child: TextFormField(
-            controller: _name,
-            autofocus: true,
-            decoration: _deco('ชื่อที่แสดง *', Icons.badge_outlined),
-            validator: (v) => (v ?? '').trim().isEmpty ? 'กรุณากรอกชื่อ' : null,
-          ),
+        TextFormField(
+          controller: _email,
+          autofocus: true,
+          keyboardType: TextInputType.emailAddress,
+          onFieldSubmitted: (_) => _save(),
+          decoration: _deco('อีเมลของบัญชี *', Icons.mail_outline_rounded),
+          validator: (v) => (v ?? '').trim().isEmpty
+              ? 'กรุณากรอกอีเมล'
+              : _emailOrEmpty(v),
         ),
-        Padding(
-          padding: const EdgeInsets.only(bottom: 14),
-          child: TextFormField(
-            controller: _username,
-            decoration: _deco('ชื่อผู้ใช้ (Username) *', Icons.person_outline),
-            validator: (v) {
-              final t = (v ?? '').trim();
-              if (t.isEmpty) return 'กรุณากรอกชื่อผู้ใช้';
-              if (!RegExp(r'^[A-Za-z0-9._-]{3,}$').hasMatch(t)) {
-                return 'ใช้ a-z, 0-9, . _ - อย่างน้อย 3 ตัว';
-              }
-              return null;
-            },
-          ),
-        ),
-        Padding(
-          padding: const EdgeInsets.only(bottom: 14),
-          child: TextFormField(
-            controller: _email,
-            keyboardType: TextInputType.emailAddress,
-            decoration: _deco('อีเมล', Icons.mail_outline_rounded),
-            validator: _emailOrEmpty,
-          ),
-        ),
+        const SizedBox(height: 18),
         _sectionTitle('สิทธิ์'),
         SegmentedButton<String>(
           showSelectedIcon: false,
           segments: [
             for (final r in kAdminRoles)
-              ButtonSegment(value: r, label: Text(r)),
+              ButtonSegment(value: r, label: Text(roleLabel(r))),
           ],
           selected: {_role},
           onSelectionChanged: (s) => setState(() => _role = s.first),
@@ -1194,52 +1122,18 @@ class _AddAdminDialogState extends State<_AddAdminDialog> {
         const SizedBox(height: 6),
         Text(
           _role == kRoleOwner
-              ? 'ผู้ดูแลหลัก: ทำได้ทุกอย่าง รวมถึงเพิ่ม/ระงับ/ลบผู้ดูแลคนอื่น'
+              ? 'ผู้ดูแลหลัก: ทำได้ทุกอย่าง รวมถึงเพิ่ม/ถอดสิทธิ์ผู้ดูแลคนอื่น'
               : 'แอดมิน: จัดการโครงการ ผู้ใช้ รายงาน และตั้งค่าได้ แต่จัดการผู้ดูแลคนอื่นไม่ได้',
           style: const TextStyle(color: AppColors.hint, fontSize: 13),
         ),
-        const SizedBox(height: 18),
-        _TempPasswordField(_password),
-        if (_error != null) ...[
-          const SizedBox(height: 10),
-          _errorText(_error!),
-        ],
+        const SizedBox(height: 12),
+        _note(
+          'คนนั้นต้องมีบัญชีก่อน — สมัครในแอป HomeConnect หรือให้สร้างใน Supabase '
+          '(Authentication › Users › Add user) แล้วค่อยเพิ่มสิทธิ์ที่นี่ '
+          'เขาจะเข้าเว็บแอดมินด้วยอีเมลและรหัสผ่านของบัญชีนั้น',
+        ),
+        if (_error != null) _errorText(_error!),
       ],
-    );
-  }
-}
-
-class _ResetPasswordDialog extends StatefulWidget {
-  const _ResetPasswordDialog(this.account);
-  final AdminAccount account;
-
-  @override
-  State<_ResetPasswordDialog> createState() => _ResetPasswordDialogState();
-}
-
-class _ResetPasswordDialogState extends State<_ResetPasswordDialog> {
-  final _formKey = GlobalKey<FormState>();
-  final _password = TextEditingController(text: _randomPassword());
-
-  @override
-  void dispose() {
-    _password.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return _SettingsShell(
-      icon: Icons.key_rounded,
-      title: 'ตั้งรหัสผ่านใหม่ให้ ${widget.account.name}',
-      formKey: _formKey,
-      onSave: () async {
-        if (!_formKey.currentState!.validate()) return;
-        final nav = Navigator.of(context);
-        await AdminAuth.instance.resetPassword(widget.account, _password.text);
-        nav.pop();
-      },
-      children: [const SizedBox(height: 6), _TempPasswordField(_password)],
     );
   }
 }
